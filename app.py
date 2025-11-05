@@ -5,6 +5,42 @@ import copy
 import numpy as np
 import matplotlib.pyplot as plt
 import streamlit as st
+import subprocess, sys, os
+
+APP_DIR = Path(__file__).parent.resolve()
+CLT_DIR = APP_DIR / "CLT_BaseModel"
+
+def ensure_clt_repo():
+    if CLT_DIR.exists() and (CLT_DIR / ".git").exists():
+        return True
+    if CLT_DIR.exists():
+        # A previous (non-git) copy exists; use it
+        return True
+
+    st.info("CLT_BaseModel not found. Cloning repository…")
+    try:
+        # Shallow clone (faster). If you need a specific branch/tag, add: '-b', 'main' (or tag)
+        result = subprocess.run(
+            ["git", "clone", "--depth", "1", "https://github.com/LP-relaxation/CLT_BaseModel.git", str(CLT_DIR)],
+            check=True, capture_output=True, text=True
+        )
+        st.success("CLT_BaseModel cloned successfully.")
+        return True
+    except Exception as e:
+        st.error(
+            "Failed to clone CLT_BaseModel automatically.\n"
+            "Please vendor the folder into your app repo at `CLT_BaseModel/`.\n\n"
+            f"Details: {e}"
+        )
+        return False
+
+if not ensure_clt_repo():
+    st.stop()
+
+# Make the repo importable
+if str(CLT_DIR) not in sys.path:
+    sys.path.insert(0, str(CLT_DIR))
+
 
 # ---------------- Dependency guard: PyTorch ----------------
 try:
@@ -16,10 +52,6 @@ except Exception as e:
         f"Import error: {e}"
     )
     st.stop()
-
-# ---------------- Locate vendored model repo ----------------
-APP_DIR = Path(__file__).parent.resolve()
-CLT_DIR = APP_DIR / "CLT_BaseModel"   # <- put the model code+data here
 
 if not CLT_DIR.exists():
     st.error(
