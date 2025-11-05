@@ -1,27 +1,41 @@
 # app.py
 from pathlib import Path
 import sys
+import subprocess
 import copy
 import numpy as np
 import matplotlib.pyplot as plt
 import streamlit as st
-import subprocess, sys, os
 
+# --------------------------------------------------------------------------------------
+# 0) Dependency guard: show a friendly message if torch isn't installed (build issues).
+# --------------------------------------------------------------------------------------
+try:
+    import torch  # noqa
+except Exception as e:
+    st.error(
+        "PyTorch failed to import. Ensure your repo has `requirements.txt` with `torch==2.9.0`, "
+        "then Manage app → Clear cache and reinstall.\n\n"
+        f"Import error: {e}"
+    )
+    st.stop()
+
+# --------------------------------------------------------------------------------------
+# 1) Ensure the CLT_BaseModel code/data folder exists (auto-clone if missing).
+#    - If you've already copied the repo into your app, this is a no-op.
+#    - Works for the public repo. Private repos require vendoring instead of clone.
+# --------------------------------------------------------------------------------------
 APP_DIR = Path(__file__).parent.resolve()
 CLT_DIR = APP_DIR / "CLT_BaseModel"
 
 def ensure_clt_repo():
-    if CLT_DIR.exists() and (CLT_DIR / ".git").exists():
-        return True
     if CLT_DIR.exists():
-        # A previous (non-git) copy exists; use it
         return True
-
-    st.info("CLT_BaseModel not found. Cloning repository…")
     try:
-        # Shallow clone (faster). If you need a specific branch/tag, add: '-b', 'main' (or tag)
-        result = subprocess.run(
-            ["git", "clone", "--depth", "1", "https://github.com/LP-relaxation/CLT_BaseModel.git", str(CLT_DIR)],
+        st.info("CLT_BaseModel not found. Cloning repository…")
+        subprocess.run(
+            ["git", "clone", "--depth", "1",
+             "https://github.com/LP-relaxation/CLT_BaseModel.git", str(CLT_DIR)],
             check=True, capture_output=True, text=True
         )
         st.success("CLT_BaseModel cloned successfully.")
@@ -29,7 +43,7 @@ def ensure_clt_repo():
     except Exception as e:
         st.error(
             "Failed to clone CLT_BaseModel automatically.\n"
-            "Please vendor the folder into your app repo at `CLT_BaseModel/`.\n\n"
+            "Please vendor the folder into your app repo at `CLT_BaseModel/` and redeploy.\n\n"
             f"Details: {e}"
         )
         return False
@@ -37,57 +51,37 @@ def ensure_clt_repo():
 if not ensure_clt_repo():
     st.stop()
 
-# Make the repo importable
+# Make model repo importable
 if str(CLT_DIR) not in sys.path:
     sys.path.insert(0, str(CLT_DIR))
 
-
-# ---------------- Dependency guard: PyTorch ----------------
-try:
-    import torch
-except Exception as e:
-    st.error(
-        "PyTorch failed to import. Ensure your requirements.txt at repo root contains "
-        "`torch==2.9.0`, then Manage app → Clear cache and reinstall.\n\n"
-        f"Import error: {e}"
-    )
-    st.stop()
-
-if not CLT_DIR.exists():
-    st.error(
-        "Missing model code/data: `CLT_BaseModel/` not found in the app repository.\n\n"
-        "Please vendor the CLT_BaseModel repo (copy the folder or add as a git submodule) so this app "
-        "can load `flu_core`, `clt_toolkit`, and the input files in `flu_instances/`."
-    )
-    st.stop()
-
-if str(CLT_DIR) not in sys.path:
-    sys.path.insert(0, str(CLT_DIR))
-
-# ---------------- Import model packages ----------------
+# --------------------------------------------------------------------------------------
+# 2) Import the model packages (from the vendored/auto-cloned repo).
+# --------------------------------------------------------------------------------------
 try:
     import clt_toolkit as clt
     import flu_core as flu
 except Exception as e:
     st.error(
         "Failed to import `clt_toolkit` / `flu_core` from CLT_BaseModel.\n"
-        "Verify those modules are present and importable in `CLT_BaseModel/`.\n\n"
+        "Verify those modules exist in CLT_BaseModel/ and are importable.\n\n"
         f"Import error: {e}"
     )
     st.stop()
 
-# ---------------- Utility helpers ----------------
+# --------------------------------------------------------------------------------------
+# 3) Small helpers
+# --------------------------------------------------------------------------------------
 def as_like(val, like_tensor):
     return torch.as_tensor(val, dtype=like_tensor.dtype, device=like_tensor.device)
 
 def set_beta_by_location(p, beta_vec):
     """beta_vec length must equal L; broadcast to [L, A, R]."""
     L, A, R = p.beta_baseline.shape
-    beta_like = p.beta_baseline
     vec = np.asarray(beta_vec, dtype=float)
     if len(vec) != L:
         raise ValueError(f"beta_by_location length must be {L}, got {len(vec)}")
-    new_beta = torch.as_tensor(vec, dtype=beta_like.dtype, device=beta_like.device).view(L, 1, 1).expand(L, A, R)
+    new_beta = torch.as_tensor(vec, dtype=p.beta_baseline.dtype, device=p.beta_baseline.device).view(L, 1, 1).expand(L, A, R)
     p.beta_baseline = new_beta
 
 def apply_rate_multiplier(p, field_name, mult):
@@ -97,18 +91,20 @@ def apply_rate_multiplier(p, field_name, mult):
 def simulate_total_admits(state, params, precomputed, schedules, T, tpd):
     with torch.no_grad():
         admits = flu.torch_simulate_hospital_admits(state, params, precomputed, schedules, T, tpd)
-        # aggregate to daily total series [T]
-        return torch.sum(admits, dim=(1, 2, 3)).cpu().numpy()
+        return torch.sum(admits, dim=(1, 2, 3)).cpu().numpy()  # [T]
 
+# --------------------------------------------------------------------------------------
+# 4) Load all model inputs and create base tensors.
+# --------------------------------------------------------------------------------------
 @st.cache_resource(show_spinner=True)
 def load_model_inputs():
-    """Load model data & build base tensors. Everything is created here."""
     import pandas as pd
-    # ---- timing ----
+
+    # Timing
     T = 180
     timesteps_per_day = 4
 
-    # ---- resolve paths (must exist in vendored repo) ----
+    # Paths from the repo
     texas_files_path = CLT_DIR / "flu_instances" / "texas_input_files"
     calibration_files_path = CLT_DIR / "flu_instances" / "calibration_research_input_files"
 
@@ -131,7 +127,7 @@ def load_model_inputs():
         daily_vaccines=vaccines_df,
     )
 
-    # Build dataclasses
+    # Dataclasses
     subpopA_init_vals = clt.make_dataclass_from_json(subpopA_init_vals_fp, flu.FluSubpopState)
     subpopB_init_vals = clt.make_dataclass_from_json(subpopB_init_vals_fp, flu.FluSubpopState)
     subpopC_init_vals = clt.make_dataclass_from_json(subpopC_init_vals_fp, flu.FluSubpopState)
@@ -140,15 +136,15 @@ def load_model_inputs():
     mixing_params = clt.make_dataclass_from_json(mixing_params_fp, flu.FluMixingParams)
     simulation_settings = clt.make_dataclass_from_json(simulation_settings_fp, flu.SimulationSettings)
 
-    # Set tpd (you used 4)
+    # Your preferred step size
     simulation_settings = clt.updated_dataclass(simulation_settings, {"timesteps_per_day": timesteps_per_day})
 
-    # Provide per-location beta baselines (will be overridden by sliders)
+    # Baseline β per location (these are *means*; we'll override with sliders)
     subpopA_params = clt.updated_dataclass(common_subpop_params, {"beta_baseline": 1.5})
     subpopB_params = clt.updated_dataclass(common_subpop_params, {"beta_baseline": 2.5})
     subpopC_params = clt.updated_dataclass(common_subpop_params, {"beta_baseline": 2.2})
 
-    # Build subpops (seeded RNGs)
+    # Subpop models (seeded RNGs)
     subpopA = flu.FluSubpopModel(subpopA_init_vals, subpopA_params, simulation_settings,
                                  np.random.Generator(np.random.MT19937(111)), schedules_info, name="subpopA")
     subpopB = flu.FluSubpopModel(subpopB_init_vals, subpopB_params, simulation_settings,
@@ -156,29 +152,25 @@ def load_model_inputs():
     subpopC = flu.FluSubpopModel(subpopC_init_vals, subpopC_params, simulation_settings,
                                  np.random.Generator(np.random.MT19937(333)), schedules_info, name="subpopC")
 
-    # Metapop wrapper
+    # Metapop wrapper → torch inputs
     flu_demo_model = flu.FluMetapopModel([subpopA, subpopB, subpopC], mixing_params)
-
-    # Torch inputs
     d = flu_demo_model.get_flu_torch_inputs()
-    base_state = d["state_tensors"]
-    base_params = d["params_tensors"]
-    base_schedules = d["schedule_tensors"]
-    base_precomputed = d["precomputed"]
 
     return dict(
-        base_state=base_state,
-        base_params=base_params,
-        base_schedules=base_schedules,
-        base_precomputed=base_precomputed,
+        base_state=d["state_tensors"],
+        base_params=d["params_tensors"],
+        base_schedules=d["schedule_tensors"],
+        base_precomputed=d["precomputed"],
         T=T,
         timesteps_per_day=timesteps_per_day,
     )
 
-# ===================== UI =====================
+# --------------------------------------------------------------------------------------
+# 5) UI
+# --------------------------------------------------------------------------------------
 st.set_page_config(page_title="Metapop Admissions Explorer", layout="wide")
 st.title("Metapop Admissions Explorer (β & Rate Controls)")
-st.caption("Self-contained app: loads model, exposes sliders, and plots aggregate hospital admissions.")
+st.caption("Self-contained: clones/loads model, exposes sliders, and updates the plot in real time.")
 
 ctx = load_model_inputs()
 base_state       = ctx["base_state"]
@@ -188,7 +180,7 @@ base_precomputed = ctx["base_precomputed"]
 T                = ctx["T"]
 timesteps_per_day= ctx["timesteps_per_day"]
 
-# Show defaults for transparency
+# Defaults for transparency
 L, A, R = base_params.beta_baseline.shape
 default_rates = {
     "E_to_I_rate":    float(base_params.E_to_I_rate),
@@ -202,7 +194,7 @@ default_immunity = {
     "inf_induced_inf_risk_reduce": float(torch.as_tensor(base_params.inf_induced_inf_risk_reduce).mean().item()),
 }
 
-with st.expander("Model defaults", expanded=False):
+with st.expander("Model defaults (from loaded tensors)"):
     st.write("**Rates (per day):**"); st.json(default_rates)
     st.write("**Immunity / reinfection:**"); st.json(default_immunity)
 
@@ -229,44 +221,43 @@ m_RS   = i1.slider("R→S × (reinfection)",                0.0001, 5.0, 1.0, 0.
 m_wane = i2.slider("inf_induced_immune_wane ×",          0.0001, 5.0, 1.0, 0.01, format="%.4f")
 m_prot = i3.slider("inf_induced_inf_risk_reduce ×",      0.0001, 5.0, 1.0, 0.01, format="%.4f")
 
+# --------------------------------------------------------------------------------------
+# 6) Reactive simulation: run immediately on any slider change
+# --------------------------------------------------------------------------------------
+# Build a working params tensor pack
+p = copy.deepcopy(base_params)
 
-run = st.button("Run Simulation")
+# 1) Set β by location
+set_beta_by_location(p, beta_vec)
 
-if run:
-    # Build a working params tensor pack
-    p = copy.deepcopy(base_params)
+# 2) Rate multipliers
+apply_rate_multiplier(p, "E_to_I_rate",   m_EI)
+apply_rate_multiplier(p, "IP_to_IS_rate", m_IP)
+apply_rate_multiplier(p, "IS_to_R_rate",  m_ISR)
+apply_rate_multiplier(p, "IA_to_R_rate",  m_IAR)
 
-    # 1) Set β
-    set_beta_by_location(p, beta_vec)
+# 3) Reinfection / immunity multipliers
+apply_rate_multiplier(p, "R_to_S_rate", m_RS)
+p.inf_induced_immune_wane     = p.inf_induced_immune_wane * as_like(m_wane,  torch.as_tensor(p.inf_induced_immune_wane))
+p.inf_induced_inf_risk_reduce = p.inf_induced_inf_risk_reduce * as_like(m_prot, torch.as_tensor(p.inf_induced_inf_risk_reduce))
 
-    # 2) Rate multipliers
-    apply_rate_multiplier(p, "E_to_I_rate",   m_EI)
-    apply_rate_multiplier(p, "IP_to_IS_rate", m_IP)
-    apply_rate_multiplier(p, "IS_to_R_rate",  m_ISR)
-    apply_rate_multiplier(p, "IA_to_R_rate",  m_IAR)
-
-    # 3) Reinfection / immunity
-    apply_rate_multiplier(p, "R_to_S_rate", m_RS)
-    p.inf_induced_immune_wane     = p.inf_induced_immune_wane * as_like(m_wane,  torch.as_tensor(p.inf_induced_immune_wane))
-    p.inf_induced_inf_risk_reduce = p.inf_induced_inf_risk_reduce * as_like(m_prot, torch.as_tensor(p.inf_induced_inf_risk_reduce))
-
-    # 4) Simulate and plot
+# 4) Simulate & plot
+with st.spinner("Simulating…"):
     y = simulate_total_admits(base_state, p, base_precomputed, base_schedules, T, timesteps_per_day)
-    xs = np.arange(len(y))  # daily
 
-    fig, ax = plt.subplots(figsize=(10, 5))
-    ax.plot(xs, y, linewidth=2)
-    ax.set_title("Aggregate Hospital Admissions (sum over L, A, R)")
-    ax.set_xlabel("Time (days)"); ax.set_ylabel("Total Daily Hospital Admissions")
-    ax.grid(True, linestyle='--', alpha=0.5)
+xs = np.arange(len(y))  # daily
+fig, ax = plt.subplots(figsize=(10, 5))
+ax.plot(xs, y, linewidth=2)
+ax.set_title("Aggregate Hospital Admissions (sum over L, A, R)")
+ax.set_xlabel("Time (days)")
+ax.set_ylabel("Total Daily Hospital Admissions")
+ax.grid(True, linestyle='--', alpha=0.5)
 
-    txt = (
-        f"β = [{beta_vec[0]:.4f}, {beta_vec[1]:.4f}, {beta_vec[2]:.4f}]  |  "
-        f"E→I×{m_EI:.2f}, IP→IS×{m_IP:.2f}, IS→R×{m_ISR:.2f}, IA→R×{m_IAR:.2f}  |  "
-        f"R→S×{m_RS:.2f}, wane×{m_wane:.2f}, protection×{m_prot:.2f}"
-    )
-    ax.text(0.01, -0.18, txt, transform=ax.transAxes, fontsize=10, va='top', ha='left', wrap=True)
+txt = (
+    f"β = [{beta_vec[0]:.4f}, {beta_vec[1]:.4f}, {beta_vec[2]:.4f}]  |  "
+    f"E→I×{m_EI:.4f}, IP→IS×{m_IP:.4f}, IS→R×{m_ISR:.4f}, IA→R×{m_IAR:.4f}  |  "
+    f"R→S×{m_RS:.4f}, wane×{m_wane:.4f}, protection×{m_prot:.4f}"
+)
+ax.text(0.01, -0.18, txt, transform=ax.transAxes, fontsize=10, va='top', ha='left', wrap=True)
 
-    st.pyplot(fig)
-else:
-    st.info("Adjust sliders and click **Run Simulation**.")
+st.pyplot(fig)
