@@ -1,5 +1,7 @@
 streamlit==1.51.0
 torch==2.9.0
 numpy
-matplotlib
 pandas
+matplotlib
+scipy
+sciris
