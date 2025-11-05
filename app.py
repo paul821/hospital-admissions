@@ -217,17 +217,18 @@ beta_vec = [beta0, beta1, beta2]
 st.markdown("---")
 st.markdown("### Rate Multipliers (relative to defaults)")
 r1, r2, r3, r4 = st.columns(4)
-m_EI  = r1.slider("E→I ×",   0.25, 2.0, 1.0, 0.05)
-m_IP  = r2.slider("IP→IS ×", 0.25, 2.0, 1.0, 0.05)
-m_ISR = r3.slider("IS→R ×",  0.25, 2.0, 1.0, 0.05)
-m_IAR = r4.slider("IA→R ×",  0.25, 2.0, 1.0, 0.05)
+m_EI  = r1.slider("E→I ×",   0.0001, 5.0, 1.0, 0.01, format="%.4f")
+m_IP  = r2.slider("IP→IS ×", 0.0001, 5.0, 1.0, 0.01, format="%.4f")
+m_ISR = r3.slider("IS→R ×",  0.0001, 5.0, 1.0, 0.01, format="%.4f")
+m_IAR = r4.slider("IA→R ×",  0.0001, 5.0, 1.0, 0.01, format="%.4f")
 
 st.markdown("---")
 st.markdown("### Reinfection / Immunity Multipliers")
 i1, i2, i3 = st.columns(3)
-m_RS   = i1.slider("R→S × (reinfection)",                0.1, 2.0, 1.0, 0.05)
-m_wane = i2.slider("inf_induced_immune_wane ×",          0.1, 2.0, 1.0, 0.05)
-m_prot = i3.slider("inf_induced_inf_risk_reduce ×",      0.5, 1.5, 1.0, 0.05)
+m_RS   = i1.slider("R→S × (reinfection)",                0.0001, 5.0, 1.0, 0.01, format="%.4f")
+m_wane = i2.slider("inf_induced_immune_wane ×",          0.0001, 5.0, 1.0, 0.01, format="%.4f")
+m_prot = i3.slider("inf_induced_inf_risk_reduce ×",      0.0001, 5.0, 1.0, 0.01, format="%.4f")
+
 
 run = st.button("Run Simulation")
 
