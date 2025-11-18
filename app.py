@@ -296,3 +296,22 @@ caption = (
 )
 st.caption(caption)
 st.pyplot(fig, use_container_width=True)
+
+
+# ===== Reference Plot =====
+st.markdown("---")
+st.title("Reference Plot")
+
+# Run reference simulation with same modified params
+with st.spinner("Running reference simulation…"):
+    ref_admits = flu.torch_simulate_hospital_admits(base_state, p, base_precomputed, base_schedules, 100, 2)
+    ref_y = torch.sum(ref_admits, dim=(1, 2, 3)).cpu().numpy()
+
+ref_xs = np.arange(len(ref_y))
+fig_ref, ax_ref = plt.subplots(figsize=(12, 5))
+ax_ref.plot(ref_xs, ref_y, linewidth=2, label="True hospital admits")
+ax_ref.set_xlabel("Time (days)")
+ax_ref.set_ylabel("Total Daily Hospital Admissions")
+ax_ref.grid(True, linestyle='--', alpha=0.5)
+ax_ref.legend()
+st.pyplot(fig_ref, use_container_width=True)
