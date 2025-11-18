@@ -173,11 +173,11 @@ L, A, R = base_params.beta_baseline.shape
 default_rates = {
     "E_to_I_rate":    float(base_params.E_to_I_rate),
     "IP_to_IS_rate":  float(base_params.IP_to_IS_rate),
-    "IS_to_R_rate":   float(base_params.IS_to_R_rate),
+    "ISR_to_R_rate":   float(base_params.ISR_to_R_rate),
     "IA_to_R_rate":   float(base_params.IA_to_R_rate),
-    "IS_to_H_rate":   float(base_params.IS_to_H_rate),
-    "H_to_R_rate":    float(base_params.H_to_R_rate),
-    "H_to_D_rate":    float(base_params.H_to_D_rate),
+    "ISH_to_H_rate":   float(base_params.ISH_to_H_rate),
+    "HR_to_R_rate":    float(base_params.HR_to_R_rate),
+    "HD_to_D_rate":    float(base_params.HD_to_D_rate),
 }
 default_split_inf = {
     "E_to_IA_prop":   float(torch.as_tensor(base_params.E_to_IA_prop).mean().item()),
@@ -250,11 +250,11 @@ set_beta_by_location(p, beta_vec)
 # 2) Rate multipliers (infectious + hospital flows)
 apply_rate_multiplier(p, "E_to_I_rate",   m_EI)
 apply_rate_multiplier(p, "IP_to_IS_rate", m_IP)
-apply_rate_multiplier(p, "IS_to_R_rate",  m_ISR)
+apply_rate_multiplier(p, "ISR_to_R_rate",  m_ISR)
 apply_rate_multiplier(p, "IA_to_R_rate",  m_IAR)
-apply_rate_multiplier(p, "IS_to_H_rate",  m_ISH)
-apply_rate_multiplier(p, "H_to_R_rate",   m_HR)
-apply_rate_multiplier(p, "H_to_D_rate",   m_HD)
+apply_rate_multiplier(p, "ISH_to_H_rate",  m_ISH)
+apply_rate_multiplier(p, "HR_to_R_rate",   m_HR)
+apply_rate_multiplier(p, "HD_to_D_rate",   m_HD)
 
 # 3) Split / infectiousness
 apply_prob_multiplier_clip01(p, "E_to_IA_prop", m_EIAp)
