@@ -134,12 +134,15 @@ def load_model_inputs():
     subpopB_params = clt.updated_dataclass(common_subpop_params, {"beta_baseline": 2.5})
     subpopC_params = clt.updated_dataclass(common_subpop_params, {"beta_baseline": 2.2})
 
+    bit_generator = np.random.MT19937(88888)
+    jumped_bit_generator = bit_generator.jumped(1)
+
     subpopA = flu.FluSubpopModel(subpopA_init_vals, subpopA_params, simulation_settings,
-                                 np.random.Generator(np.random.MT19937(111)), schedules_info, name="subpopA")
+                                 np.random.Generator(bit_generator), schedules_info, name="subpopA")
     subpopB = flu.FluSubpopModel(subpopB_init_vals, subpopB_params, simulation_settings,
-                                 np.random.Generator(np.random.MT19937(222)), schedules_info, name="subpopB")
+                                 np.random.Generator(jumped_bit_generator), schedules_info, name="subpopB")
     subpopC = flu.FluSubpopModel(subpopC_init_vals, subpopC_params, simulation_settings,
-                                 np.random.Generator(np.random.MT19937(333)), schedules_info, name="subpopC")
+                                 np.random.Generator(jumped_bit_generator), schedules_info, name="subpopC")
 
     flu_demo_model = flu.FluMetapopModel([subpopA, subpopB, subpopC], mixing_params)
     d = flu_demo_model.get_flu_torch_inputs()
@@ -296,22 +299,3 @@ caption = (
 )
 st.caption(caption)
 st.pyplot(fig, use_container_width=True)
-
-
-# ===== Reference Plot =====
-st.markdown("---")
-st.title("Reference Plot")
-
-# Run reference simulation with same modified params
-with st.spinner("Running reference simulation…"):
-    ref_admits = flu.torch_simulate_hospital_admits(base_state, p, base_precomputed, base_schedules, 100, 2)
-    ref_y = torch.sum(ref_admits, dim=(1, 2, 3)).cpu().numpy()
-
-ref_xs = np.arange(len(ref_y))
-fig_ref, ax_ref = plt.subplots(figsize=(12, 5))
-ax_ref.plot(ref_xs, ref_y, linewidth=2, label="True hospital admits")
-ax_ref.set_xlabel("Time (days)")
-ax_ref.set_ylabel("Total Daily Hospital Admissions")
-ax_ref.grid(True, linestyle='--', alpha=0.5)
-ax_ref.legend()
-st.pyplot(fig_ref, use_container_width=True)
