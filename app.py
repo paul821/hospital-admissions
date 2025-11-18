@@ -63,29 +63,15 @@ except Exception as e:
 def as_like(val, like_tensor):
     return torch.as_tensor(val, dtype=like_tensor.dtype, device=like_tensor.device)
 
-def set_beta_by_location(p, beta_vec):
-    L, A, R = p.beta_baseline.shape
-    vec = np.asarray(beta_vec, dtype=float)
-    if len(vec) != L:
-        raise ValueError(f"beta_by_location length must be {L}, got {len(vec)}")
-    new_beta = torch.as_tensor(vec, dtype=p.beta_baseline.dtype, device=p.beta_baseline.device)\
-                    .view(L, 1, 1).expand(L, A, R)
-    p.beta_baseline = new_beta
-
 def apply_rate_multiplier(p, field_name, mult):
     cur = getattr(p, field_name)
     setattr(p, field_name, cur * as_like(mult, cur))
 
 def apply_prob_multiplier_clip01(p, field_name, mult):
-    """For fields that represent probabilities/reductions in [0,1].
-       Works for scalars or A×R arrays; preserves shape and clips to [0,1]."""
     cur = getattr(p, field_name)
-    t = torch.as_tensor(cur, dtype=torch.as_tensor(cur).dtype)
+    t = torch.as_tensor(cur)
     new_val = (t * float(mult)).clamp(0.0, 1.0)
-    # Keep device/dtype of original param tensor in p if it is a torch tensor
-    like = torch.as_tensor(cur, dtype=new_val.dtype)
-    new_val = new_val.to(like.dtype)
-    setattr(p, field_name, new_val)
+    setattr(p, field_name, new_val.to(t.dtype))
 
 def simulate_total_admits(state, params, precomputed, schedules, T, tpd):
     with torch.no_grad():
@@ -129,10 +115,9 @@ def load_model_inputs():
 
     simulation_settings = clt.updated_dataclass(simulation_settings, {"timesteps_per_day": timesteps_per_day})
 
-    # seed betas (will be overridden by sliders)
-    subpopA_params = clt.updated_dataclass(common_subpop_params, {"beta_baseline": 1.5})
-    subpopB_params = clt.updated_dataclass(common_subpop_params, {"beta_baseline": 2.5})
-    subpopC_params = clt.updated_dataclass(common_subpop_params, {"beta_baseline": 2.2})
+    subpopA_params = clt.updated_dataclass(common_subpop_params, {"beta_baseline": 1})
+    subpopB_params = clt.updated_dataclass(common_subpop_params, {"beta_baseline": 1})
+    subpopC_params = clt.updated_dataclass(common_subpop_params, {"beta_baseline": 1})
 
     bit_generator = np.random.MT19937(88888)
     jumped_bit_generator = bit_generator.jumped(1)
@@ -167,112 +152,137 @@ timesteps_per_day= ctx["timesteps_per_day"]
 # ===== Sidebar controls (scrollable) =====
 st.sidebar.title("Controls")
 
-L, A, R = base_params.beta_baseline.shape
-
-# Show defaults
+# Extract defaults exactly from tensors
 default_rates = {
-    "E_to_I_rate":    float(base_params.E_to_I_rate),
-    "IP_to_IS_rate":  float(base_params.IP_to_IS_rate),
-    "ISR_to_R_rate":   float(base_params.ISR_to_R_rate),
-    "IA_to_R_rate":   float(base_params.IA_to_R_rate),
-    "ISH_to_H_rate":   float(base_params.ISH_to_H_rate),
-    "HR_to_R_rate":    float(base_params.HR_to_R_rate),
-    "HD_to_D_rate":    float(base_params.HD_to_D_rate),
+    "beta_baseline": float(base_params.beta_baseline),
+    "humidity_impact": float(base_params.humidity_impact),
+    "inf_induced_saturation": float(base_params.inf_induced_saturation),
+    "vax_induced_saturation": float(base_params.vax_induced_saturation),
+    "E_to_I_rate": float(base_params.E_to_I_rate),
+    "IP_to_IS_rate": float(base_params.IP_to_IS_rate),
+    "ISH_to_H_rate": float(base_params.ISH_to_H_rate),
+    "ISR_to_R_rate": float(base_params.ISR_to_R_rate),
+    "IA_to_R_rate": float(base_params.IA_to_R_rate),
+    "HR_to_R_rate": float(base_params.HR_to_R_rate),
+    "HD_to_D_rate": float(base_params.HD_to_D_rate),
 }
+
+default_immunity = {
+    "inf_induced_immune_wane": float(base_params.inf_induced_immune_wane),
+    "vax_induced_immune_wane": float(base_params.vax_induced_immune_wane),
+    "R_to_S_rate": float(base_params.R_to_S_rate),
+}
+
+default_risks = {
+    "inf_induced_inf_risk_reduce": float(torch.as_tensor(base_params.inf_induced_inf_risk_reduce).mean().item()),
+    "inf_induced_hosp_risk_reduce": float(torch.as_tensor(base_params.inf_induced_hosp_risk_reduce).mean().item()),
+    "inf_induced_death_risk_reduce": float(torch.as_tensor(base_params.inf_induced_death_risk_reduce).mean().item()),
+    "vax_induced_inf_risk_reduce": float(torch.as_tensor(base_params.vax_induced_inf_risk_reduce).mean().item()),
+    "vax_induced_hosp_risk_reduce": float(torch.as_tensor(base_params.vax_induced_hosp_risk_reduce).mean().item()),
+    "vax_induced_death_risk_reduce": float(torch.as_tensor(base_params.vax_induced_death_risk_reduce).mean().item()),
+}
+
 default_split_inf = {
-    "E_to_IA_prop":   float(torch.as_tensor(base_params.E_to_IA_prop).mean().item()),
+    "E_to_IA_prop": float(torch.as_tensor(base_params.E_to_IA_prop).mean().item()),
     "IP_relative_inf": float(base_params.IP_relative_inf),
     "IA_relative_inf": float(base_params.IA_relative_inf),
 }
-default_immunity = {
-    "R_to_S_rate":                     float(base_params.R_to_S_rate),
-    "inf_induced_immune_wane":         float(torch.as_tensor(base_params.inf_induced_immune_wane)),
-    "vax_induced_immune_wane":         float(torch.as_tensor(base_params.vax_induced_immune_wane)),
-    "inf_induced_inf_risk_reduce":     float(torch.as_tensor(base_params.inf_induced_inf_risk_reduce).mean().item()),
-    "vax_induced_inf_risk_reduce":     float(torch.as_tensor(base_params.vax_induced_inf_risk_reduce).mean().item()),
-    "inf_induced_hosp_risk_reduce":    float(torch.as_tensor(base_params.inf_induced_hosp_risk_reduce).mean().item()),
-    "inf_induced_death_risk_reduce":   float(torch.as_tensor(base_params.inf_induced_death_risk_reduce).mean().item()),
-    "vax_induced_hosp_risk_reduce":    float(torch.as_tensor(base_params.vax_induced_hosp_risk_reduce).mean().item()),
-    "vax_induced_death_risk_reduce":   float(torch.as_tensor(base_params.vax_induced_death_risk_reduce).mean().item()),
-}
 
 with st.sidebar.expander("Model defaults (from loaded tensors)", expanded=False):
-    st.write("**Rates (per day):**"); st.json(default_rates)
+    st.write("**Rates:**"); st.json(default_rates)
+    st.write("**Immunity:**"); st.json(default_immunity)
+    st.write("**Risk reductions:**"); st.json(default_risks)
     st.write("**Split/Relative Inf:**"); st.json(default_split_inf)
-    st.write("**Immunity / Risk Reductions:**"); st.json(default_immunity)
 
-st.sidebar.markdown("### β by Location")
-beta0 = st.sidebar.slider("β L0", min_value=0.0001, max_value=0.2, value=0.0005, step=0.0001, format="%.4f")
-beta1 = st.sidebar.slider("β L1", min_value=0.0001, max_value=0.2, value=0.0005, step=0.0001, format="%.4f")
-beta2 = st.sidebar.slider("β L2", min_value=0.0001, max_value=0.2, value=0.0005, step=0.0001, format="%.4f")
-beta_vec = [beta0, beta1, beta2]
+# β baseline (scalar)
+beta_mult = st.sidebar.slider("β baseline ×", 0.0001, 5.0, 1.0, 0.01)
 
-st.sidebar.markdown("---")
-st.sidebar.markdown("### Infectious Flow Rate Multipliers (0.0001×–5×)")
-# Existing
-m_EI   = st.sidebar.slider("E→I ×",    0.0001, 5.0, 1.0, 0.01, format="%.4f")
-m_IP   = st.sidebar.slider("IP→IS ×",  0.0001, 5.0, 1.0, 0.01, format="%.4f")
-m_ISR  = st.sidebar.slider("IS→R ×",   0.0001, 5.0, 1.0, 0.01, format="%.4f")
-m_IAR  = st.sidebar.slider("IA→R ×",   0.0001, 5.0, 1.0, 0.01, format="%.4f")
-# New: hospital flow
-m_ISH  = st.sidebar.slider("IS→H ×",   0.0001, 5.0, 1.0, 0.01, format="%.4f")
-m_HR   = st.sidebar.slider("H→R ×",    0.0001, 5.0, 1.0, 0.01, format="%.4f")
-m_HD   = st.sidebar.slider("H→D ×",    0.0001, 5.0, 1.0, 0.01, format="%.4f")
+# Extra environmental factors
+humidity_mult = st.sidebar.slider("humidity_impact ×", 0.0001, 5.0, 1.0, 0.01)
+inf_sat_mult = st.sidebar.slider("inf_induced_saturation ×", 0.0001, 5.0, 1.0, 0.01)
+vax_sat_mult = st.sidebar.slider("vax_induced_saturation ×", 0.0001, 5.0, 1.0, 0.01)
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("### Split / Infectiousness Multipliers")
-# E_to_IA_prop is a proportion; scale then clip [0,1]
-m_EIAp = st.sidebar.slider("E→IA proportion × (clip 0–1)", 0.0001, 5.0, 1.0, 0.01, format="%.4f")
-# Relative infectiousness (>0)
-m_IPinf = st.sidebar.slider("IP relative infectiousness ×", 0.0001, 5.0, 1.0, 0.01, format="%.4f")
-m_IAinf = st.sidebar.slider("IA relative infectiousness ×", 0.0001, 5.0, 1.0, 0.01, format="%.4f")
+st.sidebar.markdown("### Infectious Flow Rate Multipliers")
+m_EI   = st.sidebar.slider("E→I ×",    0.0001, 5.0, 1.0, 0.01)
+m_IP   = st.sidebar.slider("IP→IS ×",  0.0001, 5.0, 1.0, 0.01)
+m_ISH  = st.sidebar.slider("ISH→H ×",  0.0001, 5.0, 1.0, 0.01)
+m_ISR  = st.sidebar.slider("ISR→R ×",  0.0001, 5.0, 1.0, 0.01)
+m_IAR  = st.sidebar.slider("IA→R ×",   0.0001, 5.0, 1.0, 0.01)
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("### Reinfection / Immunity Multipliers")
-m_RS   = st.sidebar.slider("R→S × (reinfection)",             0.0001, 5.0, 1.0, 0.01, format="%.4f")
-m_wane_inf = st.sidebar.slider("inf_induced_immune_wane ×",   0.0001, 5.0, 1.0, 0.01, format="%.4f")
-m_wane_vax = st.sidebar.slider("vax_induced_immune_wane ×",   0.0001, 5.0, 1.0, 0.01, format="%.4f")
+st.sidebar.markdown("### Hospital Flow Rates")
+m_HR   = st.sidebar.slider("HR→R ×",   0.0001, 5.0, 1.0, 0.01)
+m_HD   = st.sidebar.slider("HD→D ×",   0.0001, 5.0, 1.0, 0.01)
 
-st.sidebar.markdown("#### Risk Reduction Multipliers (clip 0–1)")
-m_inf_inf   = st.sidebar.slider("inf_induced_inf_risk_reduce ×",    0.0001, 5.0, 1.0, 0.01, format="%.4f")
-m_vax_inf   = st.sidebar.slider("vax_induced_inf_risk_reduce ×",    0.0001, 5.0, 1.0, 0.01, format="%.4f")
-m_inf_hosp  = st.sidebar.slider("inf_induced_hosp_risk_reduce ×",   0.0001, 5.0, 1.0, 0.01, format="%.4f")
-m_inf_death = st.sidebar.slider("inf_induced_death_risk_reduce ×",  0.0001, 5.0, 1.0, 0.01, format="%.4f")
-m_vax_hosp  = st.sidebar.slider("vax_induced_hosp_risk_reduce ×",   0.0001, 5.0, 1.0, 0.01, format="%.4f")
-m_vax_death = st.sidebar.slider("vax_induced_death_risk_reduce ×",  0.0001, 5.0, 1.0, 0.01, format="%.4f")
+st.sidebar.markdown("---")
+st.sidebar.markdown("### Split / Infectiousness")
+m_EIAp = st.sidebar.slider("E→IA proportion ×", 0.0001, 5.0, 1.0, 0.01)
+m_IPinf = st.sidebar.slider("IP Relative Inf ×", 0.0001, 5.0, 1.0, 0.01)
+m_IAinf = st.sidebar.slider("IA Relative Inf ×", 0.0001, 5.0, 1.0, 0.01)
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("### Reinfection / Immunity")
+m_RS   = st.sidebar.slider("R→S ×", 0.0001, 5.0, 1.0, 0.01)
+m_wane_inf = st.sidebar.slider("inf_induced_immune_wane ×", 0.0001, 5.0, 1.0, 0.01)
+m_wane_vax = st.sidebar.slider("vax_induced_immune_wane ×", 0.0001, 5.0, 1.0, 0.01)
+
+st.sidebar.markdown("#### Risk Reduction Multipliers")
+m_inf_inf   = st.sidebar.slider("inf_inf_risk_reduce ×",    0.0001, 5.0, 1.0, 0.01)
+m_vax_inf   = st.sidebar.slider("vax_inf_risk_reduce ×",    0.0001, 5.0, 1.0, 0.01)
+m_inf_hosp  = st.sidebar.slider("inf_hosp_risk_reduce ×",   0.0001, 5.0, 1.0, 0.01)
+m_inf_death = st.sidebar.slider("inf_death_risk_reduce ×",  0.0001, 5.0, 1.0, 0.01)
+m_vax_hosp  = st.sidebar.slider("vax_hosp_risk_reduce ×",   0.0001, 5.0, 1.0, 0.01)
+m_vax_death = st.sidebar.slider("vax_death_risk_reduce ×",  0.0001, 5.0, 1.0, 0.01)
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("### Extra Pathway Proportions")
+m_IP_ISH = st.sidebar.slider("IP→ISH proportion ×", 0.0001, 5.0, 1.0, 0.01)
+m_ISH_HD = st.sidebar.slider("ISH→HD proportion ×", 0.0001, 5.0, 1.0, 0.01)
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("### Age × Risk Modifiers")
+m_susc = st.sidebar.slider("relative_suscept ×", 0.0001, 5.0, 1.0, 0.01)
+m_mob  = st.sidebar.slider("mobility_modifier ×", 0.0001, 5.0, 1.0, 0.01)
 
 # ===== Build params from sliders & simulate (reactive) =====
 p = copy.deepcopy(base_params)
 
-# 1) β by location
-set_beta_by_location(p, beta_vec)
+# scalar fields
+apply_rate_multiplier(p, "beta_baseline", beta_mult)
+apply_rate_multiplier(p, "humidity_impact", humidity_mult)
+apply_rate_multiplier(p, "inf_induced_saturation", inf_sat_mult)
+apply_rate_multiplier(p, "vax_induced_saturation", vax_sat_mult)
 
-# 2) Rate multipliers (infectious + hospital flows)
 apply_rate_multiplier(p, "E_to_I_rate",   m_EI)
 apply_rate_multiplier(p, "IP_to_IS_rate", m_IP)
-apply_rate_multiplier(p, "ISR_to_R_rate",  m_ISR)
+apply_rate_multiplier(p, "ISH_to_H_rate", m_ISH)
+apply_rate_multiplier(p, "ISR_to_R_rate", m_ISR)
 apply_rate_multiplier(p, "IA_to_R_rate",  m_IAR)
-apply_rate_multiplier(p, "ISH_to_H_rate",  m_ISH)
-apply_rate_multiplier(p, "HR_to_R_rate",   m_HR)
-apply_rate_multiplier(p, "HD_to_D_rate",   m_HD)
 
-# 3) Split / infectiousness
+apply_rate_multiplier(p, "HR_to_R_rate",  m_HR)
+apply_rate_multiplier(p, "HD_to_D_rate",  m_HD)
+
 apply_prob_multiplier_clip01(p, "E_to_IA_prop", m_EIAp)
-p.IP_relative_inf = p.IP_relative_inf * as_like(m_IPinf,  torch.as_tensor(p.IP_relative_inf))
-p.IA_relative_inf = p.IA_relative_inf * as_like(m_IAinf,  torch.as_tensor(p.IA_relative_inf))
+p.IP_relative_inf = p.IP_relative_inf * as_like(m_IPinf, torch.as_tensor(p.IP_relative_inf))
+p.IA_relative_inf = p.IA_relative_inf * as_like(m_IAinf, torch.as_tensor(p.IA_relative_inf))
 
-# 4) Reinfection / immunity
 apply_rate_multiplier(p, "R_to_S_rate", m_RS)
 p.inf_induced_immune_wane = p.inf_induced_immune_wane * as_like(m_wane_inf, torch.as_tensor(p.inf_induced_immune_wane))
 p.vax_induced_immune_wane = p.vax_induced_immune_wane * as_like(m_wane_vax, torch.as_tensor(p.vax_induced_immune_wane))
 
-# 5) Risk reductions (clip to [0,1])
 apply_prob_multiplier_clip01(p, "inf_induced_inf_risk_reduce",   m_inf_inf)
 apply_prob_multiplier_clip01(p, "vax_induced_inf_risk_reduce",   m_vax_inf)
 apply_prob_multiplier_clip01(p, "inf_induced_hosp_risk_reduce",  m_inf_hosp)
 apply_prob_multiplier_clip01(p, "inf_induced_death_risk_reduce", m_inf_death)
 apply_prob_multiplier_clip01(p, "vax_induced_hosp_risk_reduce",  m_vax_hosp)
 apply_prob_multiplier_clip01(p, "vax_induced_death_risk_reduce", m_vax_death)
+
+# new tensor fields
+apply_prob_multiplier_clip01(p, "IP_to_ISH_prop", m_IP_ISH)
+apply_prob_multiplier_clip01(p, "ISH_to_HD_prop", m_ISH_HD)
+apply_rate_multiplier(p, "relative_suscept", m_susc)
+apply_rate_multiplier(p, "mobility_modifier", m_mob)
 
 with st.spinner("Simulating…"):
     y = simulate_total_admits(base_state, p, base_precomputed, base_schedules, T, timesteps_per_day)
@@ -286,16 +296,17 @@ ax.plot(xs, y, linewidth=2)
 ax.set_xlabel("Time (days)")
 ax.set_ylabel("Total Daily Hospital Admissions")
 ax.grid(True, linestyle='--', alpha=0.5)
-ax.set_title("Reactive plot — adjusts instantly with sliders")
 
 caption = (
-    f"β = [{beta_vec[0]:.4f}, {beta_vec[1]:.4f}, {beta_vec[2]:.4f}]  |  "
-    f"E→I×{m_EI:.3f}, IP→IS×{m_IP:.3f}, IS→R×{m_ISR:.3f}, IA→R×{m_IAR:.3f}, "
-    f"IS→H×{m_ISH:.3f}, H→R×{m_HR:.3f}, H→D×{m_HD:.3f}  |  "
-    f"E→IA prop×{m_EIAp:.3f}, IP_inf×{m_IPinf:.3f}, IA_inf×{m_IAinf:.3f}  |  "
-    f"R→S×{m_RS:.3f}, inf_wane×{m_wane_inf:.3f}, vax_wane×{m_wane_vax:.3f}  |  "
-    f"risk↓ (inf:{m_inf_inf:.3f}, vax:{m_vax_inf:.3f}, hosp_inf:{m_inf_hosp:.3f}, "
-    f"death_inf:{m_inf_death:.3f}, hosp_vax:{m_vax_hosp:.3f}, death_vax:{m_vax_death:.3f})"
+    f"β×{beta_mult:.3f}, hum×{humidity_mult:.3f}, sat_inf×{inf_sat_mult:.3f}, sat_vax×{vax_sat_mult:.3f} | "
+    f"E→I×{m_EI:.3f}, IP→IS×{m_IP:.3f}, ISH→H×{m_ISH:.3f}, ISR→R×{m_ISR:.3f}, IA→R×{m_IAR:.3f} | "
+    f"HR→R×{m_HR:.3f}, HD→D×{m_HD:.3f} | "
+    f"E→IA×{m_EIAp:.3f}, IP_inf×{m_IPinf:.3f}, IA_inf×{m_IAinf:.3f} | "
+    f"R→S×{m_RS:.3f}, w_inf×{m_wane_inf:.3f}, w_vax×{m_wane_vax:.3f} | "
+    f"risk×(inf:{m_inf_inf:.3f}, vax:{m_vax_inf:.3f}, hosp_inf:{m_inf_hosp:.3f}, death_inf:{m_inf_death:.3f}, "
+    f"hosp_vax:{m_vax_hosp:.3f}, death_vax:{m_vax_death:.3f}) | "
+    f"IP→ISH×{m_IP_ISH:.3f}, ISH→HD×{m_ISH_HD:.3f}, susc×{m_susc:.3f}, mob×{m_mob:.3f}"
 )
 st.caption(caption)
+
 st.pyplot(fig, use_container_width=True)
